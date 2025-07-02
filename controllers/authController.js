@@ -11,18 +11,23 @@ const signUp = async (req, res) => {
   try {
     const { email, password, phone } = req.body;
     await User.findOneAndDelete({ email, isVerified: false });
+
     let profileImage = "";
 
+    if (req.files?.profileImage?.[0]) {
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader
+          .upload_stream({ resource_type: "image" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          })
+          .end(req.files.profileImage[0].buffer);
+      });
 
-    if (req.files?.profileImage) {
-      console.log(req.files.profileImage)
-      const uploaded = await cloudinary.uploader.upload(req.file?.profileImage);
-      console.log(uploaded)
-      profileImage = uploaded.secure_url;
+      profileImage = result.secure_url;
     }
-
     const otp = generateOTP();
-    const hashedPassword = await bcrypt.hash(password, 10); 
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = new User({
       email,
@@ -51,7 +56,7 @@ const login = async (req, res) => {
     }
 
     if (user.otp !== otp) {
-      return res.status(400).json({ message: "Incorrect OTP" });
+      return { message: "Incorrect OTP" };
     }
 
     user.isVerified = true;
