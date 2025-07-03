@@ -1,4 +1,4 @@
 const multer = require("multer");
-const storage = multer.memoryStorage(); // no file saved locally
+const storage = multer.memoryStorage(); 
 const upload = multer({ storage });
 module.exports = upload;

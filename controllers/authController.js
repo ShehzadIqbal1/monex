@@ -1,35 +1,39 @@
 const User = require("../models/User");
 const cloudinary = require("../utils/cloudinary");
 const { sendOTPEmail } = require("../utils/sendEmail");
+const { generateOTP } = require("../utils/generateOtp");
 
 const bcrypt = require("bcrypt");
-
-const generateOTP = () =>
-  Math.floor(100000 + Math.random() * 900000).toString();
+const jwt = require("jsonwebtoken");
 
 const signUp = async (req, res) => {
   try {
-    const { email, password, phone } = req.body;
+    const { username, email, password, phone } = req.body;
     await User.findOneAndDelete({ email, isVerified: false });
 
     let profileImage = "";
 
     if (req.files?.profileImage?.[0]) {
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader
-          .upload_stream({ resource_type: "image" }, (error, result) => {
+      const fileBuffer = req.files.profileImage[0].buffer;
+      // Wrap in a Promise to use async/await
+      profileImage = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { resource_type: "image" },
+          (error, result) => {
             if (error) return reject(error);
-            resolve(result);
-          })
-          .end(req.files.profileImage[0].buffer);
-      });
+            resolve(result.secure_url);
+          }
+        );
 
-      profileImage = result.secure_url;
+        stream.end(fileBuffer);
+      });
     }
+
     const otp = generateOTP();
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = new User({
+      username,
       email,
       password: hashedPassword,
       phone,
@@ -39,7 +43,9 @@ const signUp = async (req, res) => {
     });
     await newUser.save();
     await sendOTPEmail(email, otp);
-    return res.status(200).json({ message: "OTP sent to email" });
+    return res
+      .status(200)
+      .json({ message: "An OTP has been sent to your email" });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -47,23 +53,38 @@ const signUp = async (req, res) => {
 
 const login = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, password, otp } = req.body;
 
     const user = await User.findOne({ email });
 
-    if (!user || user.isVerified) {
-      return res.status(400).json({ message: "Invalid or already verified" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (user.otp !== otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
     }
 
-    if (user.otp !== otp) {
-      return { message: "Incorrect OTP" };
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid password" });
     }
 
     user.isVerified = true;
-    user.otp = undefined;
+    user.otp = null;
     await user.save();
 
-    return res.status(200).json({ message: "User verified successfully" });
+    const accessToken = jwt.sign(
+      {
+        user: {
+          username: user.username,
+          id: user._id,
+          email: user.email,
+        },
+      },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: "15d" }
+    );
+    res.status(200).json({ accessToken });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
